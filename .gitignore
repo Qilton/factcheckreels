@@ -1,0 +1,18 @@
+# Node & Backend
+node_modules/
+dist/
+.env
+*.log
+pnpm-debug.log*
+
+# Android & Gradle
+*.iml
+.gradle/
+local.properties
+.idea/
+.DS_Store
+build/
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/

@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">ReelCheck</string>
+    <string name="accessibility_service_description">Reads reel text, username, and captions when the ReelCheck floating bubble is tapped to fact-check claims.</string>
+</resources>
