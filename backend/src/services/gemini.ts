@@ -26,6 +26,8 @@ export class GeminiFactCheckService {
   private client: GoogleGenAI | null = null;
   private apiKey: string | null = null;
 
+  private searchGroundingAvailable: boolean = process.env.GEMINI_SEARCH_GROUNDING !== "false";
+
   constructor() {
     this.apiKey = process.env.GEMINI_API_KEY || null;
     if (this.apiKey) {
@@ -53,13 +55,13 @@ export class GeminiFactCheckService {
             request.username,
             request.caption,
             request.onScreenText,
-            !!request.audioWavBase64
+            !!(request.audioWavBase64 && request.audioWavBase64.trim())
           ),
         },
       ];
 
       // Attach screenshot frame (in-memory base64)
-      if (request.screenshotJpegBase64) {
+      if (request.screenshotJpegBase64 && request.screenshotJpegBase64.trim()) {
         parts.push({
           inlineData: {
             mimeType: "image/jpeg",
@@ -69,7 +71,7 @@ export class GeminiFactCheckService {
       }
 
       // Attach audio buffer if captured (in-memory base64 WAV)
-      if (request.audioWavBase64) {
+      if (request.audioWavBase64 && request.audioWavBase64.trim()) {
         parts.push({
           inlineData: {
             mimeType: "audio/wav",
@@ -78,23 +80,62 @@ export class GeminiFactCheckService {
         });
       }
 
-      const response = await withTimeout(
-        this.client!.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: [
-            {
-              role: "user",
-              parts,
-            },
-          ],
-          config: {
-            systemInstruction: FACT_CHECK_SYSTEM_PROMPT,
-            tools: [{ googleSearch: {} }],
-          },
-        }),
-        15000,
-        "Gemini fact check timed out after 15 seconds"
-      );
+      const modelName = process.env.GEMINI_MODEL || "gemini-3.1-flash-lite";
+      let response: any;
+      const baseConfig: any = {
+        systemInstruction: FACT_CHECK_SYSTEM_PROMPT,
+        thinkingConfig: { thinkingBudget: 0 },
+        responseMimeType: "application/json",
+      };
+
+      if (this.searchGroundingAvailable) {
+        try {
+          response = await withTimeout(
+            this.client!.models.generateContent({
+              model: modelName,
+              contents: [{ role: "user", parts }],
+              config: {
+                systemInstruction: FACT_CHECK_SYSTEM_PROMPT,
+                thinkingConfig: { thinkingBudget: 0 },
+                tools: [{ googleSearch: {} }],
+              },
+            }),
+            15000,
+            "Gemini fact check timed out after 15 seconds"
+          );
+        } catch (err: any) {
+          if (
+            err?.message?.includes("429") ||
+            err?.message?.includes("quota") ||
+            err?.message?.includes("RESOURCE_EXHAUSTED") ||
+            err?.message?.includes("503")
+          ) {
+            console.warn("[GeminiService] Grounding search unavailable on current quota; falling back to direct model knowledge:", err.message);
+            this.searchGroundingAvailable = false;
+            response = await withTimeout(
+              this.client!.models.generateContent({
+                model: modelName,
+                contents: [{ role: "user", parts }],
+                config: baseConfig,
+              }),
+              15000,
+              "Gemini fact check timed out after 15 seconds"
+            );
+          } else {
+            throw err;
+          }
+        }
+      } else {
+        response = await withTimeout(
+          this.client!.models.generateContent({
+            model: modelName,
+            contents: [{ role: "user", parts }],
+            config: baseConfig,
+          }),
+          15000,
+          "Gemini fact check timed out after 15 seconds"
+        );
+      }
 
       const rawText = response.text || "";
       const jsonText = extractJsonText(rawText);
